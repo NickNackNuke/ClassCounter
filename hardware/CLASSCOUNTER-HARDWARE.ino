@@ -55,14 +55,28 @@ unsigned long entryCount = 0;
 unsigned long exitCount = 0;
 long currentInRoom = 0;
 
-// Simple independent sensor detection
+// Improved directional sequence detection
+enum DetectionState {
+  IDLE,                   // No detection
+  ENTRY_FIRST_SEEN,       // Entry sensor triggered first
+  EXIT_FIRST_SEEN,        // Exit sensor triggered first
+  COOLDOWN                // Cooldown after successful count
+};
+
+DetectionState detectionState = IDLE;
+unsigned long stateChangeTime = 0;
+
+// Timing constants - tuned for IR sensors
+const unsigned long SEQUENCE_TIMEOUT = 4000;     // 4 seconds to complete passage (increased for reliability)
+const unsigned long COOLDOWN_TIME = 2000;        // 2 seconds cooldown after counting
+const unsigned long MIN_TRIGGER_TIME = 100;      // Minimum time sensor must be active (debounce)
+
 bool lastEntryActive = false;
 bool lastExitActive = false;
 
-// Debounce timers (prevent multiple triggers from one person)
-unsigned long lastEntryTrigger = 0;
-unsigned long lastExitTrigger = 0;
-const unsigned long DEBOUNCE_TIME = 1000;  // 1 second cooldown between triggers
+// Track how long sensors have been active
+unsigned long entryActiveStart = 0;
+unsigned long exitActiveStart = 0;
 
 bool dataChanged = false; // Flag to track if we need to update Firebase
 
@@ -264,9 +278,11 @@ void setup() {
   
   Serial.println("\n========================================");
   Serial.println("System Ready! Monitoring sensors...");
-  Serial.println("Logic: Independent Sensor Detection");
-  Serial.println("  Sensor A (GPIO 2) = Entry (+1)");
-  Serial.println("  Sensor B (GPIO 4) = Exit (-1)");
+  Serial.println("Logic: Improved Directional Sequence");
+  Serial.println("  A→B = Entry (person entering)");
+  Serial.println("  B→A = Exit (person leaving)");
+  Serial.println("  Timeout: 4 seconds");
+  Serial.println("  Cooldown: 2 seconds");
   Serial.println("========================================\n");
   
   delay(500);
@@ -281,9 +297,21 @@ void loop() {
   bool entryActive = isObjectDetected(ENTRY_SENSOR_PIN);
   bool exitActive = isObjectDetected(EXIT_SENSOR_PIN);
   
-  // Detect rising edges (sensor just became active)
-  bool entryTriggered = entryActive && !lastEntryActive;
-  bool exitTriggered = exitActive && !lastExitActive;
+  // Track how long sensors have been continuously active (for debouncing)
+  if (entryActive && !lastEntryActive) {
+    entryActiveStart = now;
+  }
+  if (exitActive && !lastExitActive) {
+    exitActiveStart = now;
+  }
+  
+  // Only consider triggers if sensor has been active for minimum time
+  bool entryValidTrigger = entryActive && (now - entryActiveStart >= MIN_TRIGGER_TIME);
+  bool exitValidTrigger = exitActive && (now - exitActiveStart >= MIN_TRIGGER_TIME);
+  
+  // Detect rising edges (sensor just became valid)
+  bool entryTriggered = entryValidTrigger && !lastEntryActive;
+  bool exitTriggered = exitValidTrigger && !lastExitActive;
   
   // Display count status every 3 seconds
   static unsigned long lastStatusPrint = 0;
@@ -295,69 +323,127 @@ void loop() {
     Serial.print(entryCount);
     Serial.print(" | OUT: ");
     Serial.print(exitCount);
-    Serial.print(" | CURRENT IN ROOM: ");
+    Serial.print(" | CURRENT: ");
     Serial.print(currentInRoom);
+    Serial.print(" | State: ");
+    
+    switch(detectionState) {
+      case IDLE: Serial.print("IDLE"); break;
+      case ENTRY_FIRST_SEEN: Serial.print("WAITING_EXIT"); break;
+      case EXIT_FIRST_SEEN: Serial.print("WAITING_ENTRY"); break;
+      case COOLDOWN: Serial.print("COOLDOWN"); break;
+    }
+    
     Serial.print(" | WiFi: ");
-    Serial.print(WiFi.status() == WL_CONNECTED ? "OK" : "DISCONNECTED");
-    Serial.print(" | Firebase: ");
-    Serial.println(Firebase.ready() ? "CONNECTED" : "NOT READY");
+    Serial.print(WiFi.status() == WL_CONNECTED ? "OK" : "NO");
+    Serial.print(" | FB: ");
+    Serial.println(Firebase.ready() ? "OK" : "NO");
     
     lastStatusPrint = now;
   }
   
-  // SIMPLE INDEPENDENT SENSOR LOGIC
+  // IMPROVED DIRECTIONAL SEQUENCE DETECTION
   
-  // Entry Sensor A (GPIO 2) - Detects person entering
-  if (entryTriggered && (now - lastEntryTrigger > DEBOUNCE_TIME)) {
-    entryCount++;
-    currentInRoom = entryCount - exitCount;
-    lastEntryTrigger = now;
-    dataChanged = true;
-    
-    Serial.println("┌─────────────────────────────────┐");
-    Serial.println("│  >>> ENTRY DETECTED! <<<        │");
-    Serial.print("│  Total IN: ");
-    Serial.print(entryCount);
-    Serial.print("  |  In Room: ");
-    Serial.print(currentInRoom);
-    Serial.println("       │");
-    Serial.println("└─────────────────────────────────┘");
-    Serial.println();
-    
-    // Log to Firebase
-    logActivity("entry", currentInRoom);
-    updateFirebase();
+  switch (detectionState) {
+    case IDLE:
+      // Waiting for first sensor to trigger
+      if (entryTriggered) {
+        detectionState = ENTRY_FIRST_SEEN;
+        stateChangeTime = now;
+        Serial.println("→ Entry sensor triggered (waiting for exit...)");
+      } 
+      else if (exitTriggered) {
+        detectionState = EXIT_FIRST_SEEN;
+        stateChangeTime = now;
+        Serial.println("← Exit sensor triggered (waiting for entry...)");
+      }
+      break;
+      
+    case ENTRY_FIRST_SEEN:
+      // Entry sensor was first, waiting for exit sensor
+      if (exitTriggered) {
+        // ENTRY → EXIT sequence = Person entering!
+        entryCount++;
+        currentInRoom = entryCount - exitCount;
+        detectionState = COOLDOWN;
+        stateChangeTime = now;
+        dataChanged = true;
+        
+        Serial.println();
+        Serial.println("┌─────────────────────────────────┐");
+        Serial.println("│   >>> ENTRY DETECTED! <<<       │");
+        Serial.println("│   Sequence: A → B               │");
+        Serial.print("│   Total IN: ");
+        Serial.print(entryCount);
+        Serial.print("  In Room: ");
+        Serial.print(currentInRoom);
+        Serial.println("     │");
+        Serial.println("└─────────────────────────────────┘");
+        Serial.println();
+        
+        // Log to Firebase
+        logActivity("entry", currentInRoom);
+        updateFirebase();
+      }
+      else if (now - stateChangeTime > SEQUENCE_TIMEOUT) {
+        // Timeout - incomplete passage (hand wave, pet, etc.)
+        Serial.println("⚠ Timeout - incomplete sequence (ignored)");
+        detectionState = IDLE;
+      }
+      break;
+      
+    case EXIT_FIRST_SEEN:
+      // Exit sensor was first, waiting for entry sensor
+      if (entryTriggered) {
+        // EXIT → ENTRY sequence = Person exiting!
+        if (currentInRoom > 0 || exitCount < entryCount) {
+          exitCount++;
+          currentInRoom = entryCount - exitCount;
+          if (currentInRoom < 0) currentInRoom = 0;
+          detectionState = COOLDOWN;
+          stateChangeTime = now;
+          dataChanged = true;
+          
+          Serial.println();
+          Serial.println("┌─────────────────────────────────┐");
+          Serial.println("│   >>> EXIT DETECTED! <<<        │");
+          Serial.println("│   Sequence: B → A               │");
+          Serial.print("│   Total OUT: ");
+          Serial.print(exitCount);
+          Serial.print(" In Room: ");
+          Serial.print(currentInRoom);
+          Serial.println("     │");
+          Serial.println("└─────────────────────────────────┘");
+          Serial.println();
+          
+          // Log to Firebase
+          logActivity("exit", currentInRoom);
+          updateFirebase();
+        } else {
+          // Room already empty
+          Serial.println("⚠ EXIT ignored - Room is empty");
+          detectionState = COOLDOWN;
+          stateChangeTime = now;
+        }
+      }
+      else if (now - stateChangeTime > SEQUENCE_TIMEOUT) {
+        // Timeout - incomplete passage
+        Serial.println("⚠ Timeout - incomplete sequence (ignored)");
+        detectionState = IDLE;
+      }
+      break;
+      
+    case COOLDOWN:
+      // Prevent immediate re-trigger
+      if (now - stateChangeTime > COOLDOWN_TIME) {
+        detectionState = IDLE;
+        Serial.println("✓ Ready for next detection");
+      }
+      break;
   }
   
-  // Exit Sensor B (GPIO 4) - Detects person exiting
-  if (exitTriggered && (now - lastExitTrigger > DEBOUNCE_TIME)) {
-    // Only count exit if someone is in the room
-    if (exitCount < entryCount) {
-      exitCount++;
-      currentInRoom = entryCount - exitCount;
-      lastExitTrigger = now;
-      dataChanged = true;
-      
-      Serial.println("┌─────────────────────────────────┐");
-      Serial.println("│  >>> EXIT DETECTED! <<<         │");
-      Serial.print("│  Total OUT: ");
-      Serial.print(exitCount);
-      Serial.print(" |  In Room: ");
-      Serial.print(currentInRoom);
-      Serial.println("       │");
-      Serial.println("└─────────────────────────────────┘");
-      Serial.println();
-      
-      // Log to Firebase
-      logActivity("exit", currentInRoom);
-      updateFirebase();
-    } else {
-      Serial.println("⚠ EXIT ignored - Room is empty!");
-    }
-  }
-  
-  lastEntryActive = entryActive;
-  lastExitActive = exitActive;
+  lastEntryActive = entryValidTrigger;
+  lastExitActive = exitValidTrigger;
   
   // Reconnect WiFi if disconnected
   static unsigned long lastWiFiCheck = 0;
