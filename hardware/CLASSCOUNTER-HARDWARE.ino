@@ -66,10 +66,10 @@ enum DetectionState {
 DetectionState detectionState = IDLE;
 unsigned long stateChangeTime = 0;
 
-// Timing constants - tuned for IR sensors
-const unsigned long SEQUENCE_TIMEOUT = 4000;     // 4 seconds to complete passage (increased for reliability)
-const unsigned long COOLDOWN_TIME = 2000;        // 2 seconds cooldown after counting
-const unsigned long MIN_TRIGGER_TIME = 100;      // Minimum time sensor must be active (debounce)
+// Timing constants - optimized for high traffic
+const unsigned long SEQUENCE_TIMEOUT = 2000;     // 2 seconds to complete passage (fast enough for normal walking)
+const unsigned long COOLDOWN_TIME = 600;         // 600ms cooldown after counting (allows multiple people quickly)
+const unsigned long MIN_TRIGGER_TIME = 80;       // 80ms minimum sensor active time (debounce)
 
 bool lastEntryActive = false;
 bool lastExitActive = false;
@@ -278,11 +278,11 @@ void setup() {
   
   Serial.println("\n========================================");
   Serial.println("System Ready! Monitoring sensors...");
-  Serial.println("Logic: Improved Directional Sequence");
+  Serial.println("Logic: High-Traffic Directional Sequence");
   Serial.println("  A→B = Entry (person entering)");
   Serial.println("  B→A = Exit (person leaving)");
-  Serial.println("  Timeout: 4 seconds");
-  Serial.println("  Cooldown: 2 seconds");
+  Serial.println("  Timeout: 2.0s | Cooldown: 0.6s");
+  Serial.println("  Optimized for multiple people");
   Serial.println("========================================\n");
   
   delay(500);
