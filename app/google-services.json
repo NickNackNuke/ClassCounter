@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "788080139299",
+    "firebase_url": "https://classcounter-2f9e9-default-rtdb.firebaseio.com",
+    "project_id": "classcounter-2f9e9",
+    "storage_bucket": "classcounter-2f9e9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:788080139299:android:59c125ece766c87b76a596",
+        "android_client_info": {
+          "package_name": "com.example.classcounter"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClrNRt3FVpI3Ltkyfq98Q_5mXsO74WXJU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
