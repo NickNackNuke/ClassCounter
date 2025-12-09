@@ -305,13 +305,27 @@ void loop() {
     exitActiveStart = now;
   }
   
-  // Only consider triggers if sensor has been active for minimum time
-  bool entryValidTrigger = entryActive && (now - entryActiveStart >= MIN_TRIGGER_TIME);
-  bool exitValidTrigger = exitActive && (now - exitActiveStart >= MIN_TRIGGER_TIME);
+  // Reset timer if sensor goes inactive
+  if (!entryActive) {
+    entryActiveStart = 0;
+  }
+  if (!exitActive) {
+    exitActiveStart = 0;
+  }
   
-  // Detect rising edges (sensor just became valid)
-  bool entryTriggered = entryValidTrigger && !lastEntryActive;
-  bool exitTriggered = exitValidTrigger && !lastExitActive;
+  // Only consider triggers if sensor has been active for minimum time
+  bool entryValidTrigger = entryActive && (entryActiveStart > 0) && (now - entryActiveStart >= MIN_TRIGGER_TIME);
+  bool exitValidTrigger = exitActive && (exitActiveStart > 0) && (now - exitActiveStart >= MIN_TRIGGER_TIME);
+  
+  // Detect rising edges (sensor just became valid after being invalid)
+  static bool lastEntryValidTrigger = false;
+  static bool lastExitValidTrigger = false;
+  
+  bool entryTriggered = entryValidTrigger && !lastEntryValidTrigger;
+  bool exitTriggered = exitValidTrigger && !lastExitValidTrigger;
+  
+  lastEntryValidTrigger = entryValidTrigger;
+  lastExitValidTrigger = exitValidTrigger;
   
   // Display count status every 3 seconds
   static unsigned long lastStatusPrint = 0;
@@ -442,8 +456,8 @@ void loop() {
       break;
   }
   
-  lastEntryActive = entryValidTrigger;
-  lastExitActive = exitValidTrigger;
+  lastEntryActive = entryActive;
+  lastExitActive = exitActive;
   
   // Reconnect WiFi if disconnected
   static unsigned long lastWiFiCheck = 0;
