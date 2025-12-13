@@ -21,14 +21,30 @@
 // IR Sensor Logic: LOW = Object detected, HIGH = No object
 // ========================================================================
 
+// ========================================================================
+// REQUIRED LIBRARIES (Install via Arduino Library Manager)
+// ========================================================================
+// 1. ESP32 Board Support:
+//    - File → Preferences → Additional Board URLs:
+//      https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+//    - Tools → Board Manager → Install "ESP32 by Espressif Systems"
+//
+// 2. Firebase ESP Client Library:
+//    - Sketch → Include Library → Manage Libraries
+//    - Search: "Firebase ESP Client"
+//    - Install "Firebase Arduino Client Library for ESP8266 and ESP32" by mobizt
+//    - Version: 4.x.x or higher
+//
+// 3. WiFi Library (Built-in with ESP32)
+
 #include <WiFi.h>
 #include <Firebase_ESP_Client.h>
 #include <addons/TokenHelper.h>
 #include <addons/RTDBHelper.h>
 
 // ==================== WIFI CONFIGURATION ====================
-#define WIFI_SSID "LuckyBell 2.4g"
-#define WIFI_PASSWORD "Tipolo_luckybell88*"
+#define WIFI_SSID "You-Know"
+#define WIFI_PASSWORD "toyotanavara"
 
 // ==================== FIREBASE CONFIGURATION ====================
 #define API_KEY "AIzaSyClrNRt3FVpI3Ltkyfq98Q_5mXsO74WXJU"
@@ -231,6 +247,46 @@ void logActivity(const char* type, int count) {
   }
 }
 
+// Sync initial values from Firebase (in case database was cleared)
+void syncFromFirebase() {
+  if (!firebaseReady || !Firebase.ready()) {
+    Serial.println("⚠ Cannot sync - Firebase not ready");
+    return;
+  }
+  
+  Serial.println("Syncing counter values from Firebase...");
+  
+  if (Firebase.RTDB.getJSON(&fbdo, "/counter")) {
+    FirebaseJson &json = fbdo.to<FirebaseJson>();
+    FirebaseJsonData result;
+    
+    // Read entryCount
+    if (json.get(result, "entryCount")) {
+      entryCount = result.to<int>();
+      Serial.print("  Entry Count: ");
+      Serial.println(entryCount);
+    }
+    
+    // Read exitCount
+    if (json.get(result, "exitCount")) {
+      exitCount = result.to<int>();
+      Serial.print("  Exit Count: ");
+      Serial.println(exitCount);
+    }
+    
+    // Read currentInRoom
+    if (json.get(result, "currentInRoom")) {
+      currentInRoom = result.to<int>();
+      Serial.print("  Current In Room: ");
+      Serial.println(currentInRoom);
+    }
+    
+    Serial.println("✓ Sync completed - ESP32 values updated from Firebase");
+  } else {
+    Serial.println("⚠ No existing data in Firebase - starting from 0");
+  }
+}
+
 // ==================== IR SENSOR FUNCTIONS ====================
 
 bool isObjectDetected(int pin) {
@@ -266,9 +322,12 @@ void setup() {
     Serial.println("\n--- Firebase Setup ---");
     initFirebase();
     
-    // If Firebase is ready, send initial data
+    // If Firebase is ready, sync initial values from database
     if (firebaseReady) {
-      Serial.println("Sending initial data to Firebase...");
+      Serial.println("\n--- Syncing with Firebase ---");
+      syncFromFirebase();
+      
+      Serial.println("\nSending current data to Firebase...");
       updateFirebase();
     }
   } else {
